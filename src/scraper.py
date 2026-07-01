@@ -335,4 +335,64 @@ def get_stock_price_history(stock_code: str, num_sessions: int = 30) -> list[flo
 
     Trả về list giá theo thứ tự thời gian TĂNG dần (cũ → mới).
     """
-    url  = f"{BASE_URL}/{stock_code}/th
+    url  = f"{BASE_URL}/{stock_code}/thong-ke-giao-dich.htm"
+    sess = _get_session()
+
+    try:
+        resp = sess.get(url, timeout=TIMEOUT)
+        if resp.status_code != 200:
+            return []
+    except requests.RequestException:
+        return []
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+    prices = []
+
+    # Bảng thống kê giao dịch: mỗi <tr> có giá đóng cửa ở cột thứ 2
+    rows = soup.select("#stock-transactions tbody tr")
+    for tr in rows[:num_sessions]:
+        tds = tr.find_all("td")
+        if len(tds) < 2:
+            continue
+        price_text = tds[1].get_text(strip=True)
+        price = _parse_number(price_text)
+        if price:
+            prices.append(price)
+
+    prices.reverse()  # đảo lại để có thứ tự cũ → mới
+    return prices
+
+
+def crawl_all_stock_histories(stock_codes: set[str],
+                               num_sessions: int = 30,
+                               max_workers: int = 5) -> dict[str, list[float]]:
+    """
+    Crawl lịch sử giá cho nhiều mã cổ phiếu cơ sở cùng lúc.
+    Trả về dict {mã_cổ_phiếu: [giá1, giá2, ...]}.
+    """
+    histories = {}
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(get_stock_price_history, code, num_sessions): code
+            for code in stock_codes
+        }
+        for future in as_completed(futures):
+            code = futures[future]
+            try:
+                histories[code] = future.result()
+            except Exception:
+                histories[code] = []
+    return histories
+
+
+if __name__ == "__main__":
+    # Test nhanh: crawl 1 mã để kiểm tra parser còn hoạt động đúng
+    print("=== TEST get_cw_detail('CACB2510') ===")
+    detail = get_cw_detail("CACB2510")
+    for k, v in detail.items():
+        if not k.startswith("_"):
+            print(f"  {k:25s} = {v}")
+
+    print("\n=== TEST get_stock_code_from_cw ===")
+    print(f"  CACB2613 → {get_stock_code_from_cw('CACB2613')}")
+    print(f"  CVRE2602 → {get_stock_code_from_cw('CVRE2602')}")
