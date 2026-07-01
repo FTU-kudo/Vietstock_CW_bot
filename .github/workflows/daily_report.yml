@@ -1,0 +1,48 @@
+name: Daily CW Report
+
+on:
+  schedule:
+    # 16:00 giờ Việt Nam (UTC+7) = 09:00 UTC
+    # Thứ 2 - Thứ 6 (cron dùng 1-5, Chủ nhật=0, Thứ 7=6)
+    - cron: "0 9 * * 1-5"
+  workflow_dispatch:
+    # Cho phép chạy thủ công từ tab Actions trên GitHub để test
+
+jobs:
+  crawl-and-report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run daily CW report
+        env:
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          ANALYST_EMAIL: ${{ secrets.ANALYST_EMAIL }}
+          YOUR_EMAIL: ${{ secrets.YOUR_EMAIL }}
+        run: python main.py
+
+      - name: Upload Excel files as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cw-report-${{ github.run_number }}
+          path: output/*.xlsx
+          retention-days: 30
