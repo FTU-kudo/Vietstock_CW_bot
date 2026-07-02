@@ -5,6 +5,8 @@ Tự động crawl dữ liệu chứng quyền (CW) từ Vietstock, tính Premiu
 động hàng ngày lúc 16:00 (giờ VN), Thứ 2 - Thứ 6.
 
 ## Cấu trúc project (10 file)
+
+```
 vietstock-cw-bot/
 ├── .gitignore
 ├── requirements.txt
@@ -12,11 +14,12 @@ vietstock-cw-bot/
 ├── main.py                              ← orchestrator chạy toàn bộ pipeline
 ├── .github/workflows/daily_report.yml   ← cron job GitHub Actions
 └── src/
-├── scraper.py           ← Bước 1: crawl dữ liệu CW + lịch sử giá CKCS
-├── calculator.py        ← Bước 2: tính Premium, Đòn bẩy, Volatility, cờ cảnh báo hết hạn
-├── export_excel.py      ← Bước 3: xuất 2 file Excel theo mẫu PDF Yuanta
-├── expiry_warning.py    ← Bước 3.5: tổng hợp danh sách CW sắp ngừng giao dịch
-└── send_email.py        ← Bước 4: gửi email qua Gmail SMTP, kèm cảnh báo
+    ├── scraper.py           ← Bước 1: crawl dữ liệu CW + lịch sử giá CKCS
+    ├── calculator.py        ← Bước 2: tính Premium, Đòn bẩy, Volatility, cờ cảnh báo hết hạn
+    ├── export_excel.py      ← Bước 3: xuất 2 file Excel theo mẫu PDF Yuanta
+    ├── expiry_warning.py    ← Bước 3.5: tổng hợp danh sách CW sắp ngừng giao dịch
+    └── send_email.py        ← Bước 4: gửi email qua Gmail SMTP, kèm cảnh báo
+```
 
 ## Cài đặt local để test trước khi đẩy lên GitHub (tùy chọn)
 
