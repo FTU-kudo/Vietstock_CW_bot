@@ -1,11 +1,6 @@
 name: Daily CW Report
 
 on:
-  schedule:
-    # 16:00 giờ Việt Nam (UTC+7) = 09:00 UTC
-    # Đặt phút lệch khỏi mốc :00 để tránh giờ cao điểm của GitHub Actions
-    # (GitHub công bố đầu mỗi giờ là thời điểm cron dễ bị trễ nhiều nhất)
-    - cron: "13 9 * * 1-5"
   workflow_dispatch:
     # Cho phép chạy thủ công từ tab Actions trên GitHub để test
 
@@ -38,7 +33,8 @@ jobs:
       - name: Run daily CW report
         env:
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
-          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          ANALYST_EMAIL: ${{ secrets.ANALYST_EMAIL }}
           YOUR_EMAIL: ${{ secrets.YOUR_EMAIL }}
         run: python main.py
 
