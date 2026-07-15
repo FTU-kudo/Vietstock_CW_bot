@@ -29,9 +29,21 @@ SMTP_PORT = 587
 
 def build_email_body(report_date: date, total_active: int,
                       total_itm: int, total_otm: int,
-                      expiry_warning_html: str = "") -> str:
-    """Soạn nội dung email (HTML). expiry_warning_html được chèn vào cuối."""
+                      expiry_warning_html: str = "",
+                      new_listing_html: str = "") -> str:
+    """
+    Soạn nội dung email (HTML).
+    new_listing_html được chèn ngay sau phần tóm tắt (tin vui trước).
+    expiry_warning_html được chèn sau đó, trước phần footer.
+    Cả 2 có thể rỗng ("") -- khi đó không hiện <hr> thừa.
+    """
     date_str = report_date.strftime("%d/%m/%Y")
+
+    new_listing_block = (
+        f"<hr style='border:none;border-top:1px solid #ddd;margin:20px 0;'>{new_listing_html}"
+        if new_listing_html else ""
+    )
+
     return f"""
     <html>
     <body style="font-family: Arial, sans-serif; font-size: 14px;">
@@ -50,6 +62,7 @@ def build_email_body(report_date: date, total_active: int,
             <li>Số CW đang ITM (trong tiền): <b>{total_itm}</b></li>
             <li>Số CW đang OTM (ngoài tiền): <b>{total_otm}</b></li>
         </ul>
+        {new_listing_block}
         <hr style="border:none;border-top:1px solid #ddd;margin:20px 0;">
         {expiry_warning_html}
         <hr style="border:none;border-top:1px solid #ddd;margin:20px 0;">
@@ -64,20 +77,20 @@ def build_email_body(report_date: date, total_active: int,
 
 def send_report_email(file_paths: list[str], report_date: date | None = None,
                        summary_stats: dict | None = None,
-                       expiry_warning_html: str = "") -> bool:
+                       expiry_warning_html: str = "",
+                       new_listing_html: str = "") -> bool:
     """
     Gửi email kèm các file Excel.
 
     file_paths: list đường dẫn file cần đính kèm
     summary_stats: dict {"total_active": int, "total_itm": int, "total_otm": int}
-    expiry_warning_html: đoạn HTML cảnh báo CW sắp ngừng giao dịch,
-                         được chèn vào cuối email chính (xem src/expiry_warning.py)
+    expiry_warning_html: đoạn HTML cảnh báo CW sắp ngừng giao dịch
+    new_listing_html: đoạn HTML danh sách CW mới niêm yết (xem src/new_listing.py)
 
     Người nhận chính: ANALYST_EMAIL (bộ phận phân tích)
-    CC thêm: YOUR_EMAIL (bạn — người vận hành hệ thống) nếu có khai báo,
-             để nhận cùng nội dung cảnh báo trong 1 email duy nhất.
+    CC thêm: YOUR_EMAIL (bạn — người vận hành hệ thống) nếu có khai báo.
 
-    Trả về True nếu gửi thành công, False nếu lỗi (lỗi sẽ được in ra console,
+    Trả về True nếu gửi thành công, False nếu lỗi (lỗi được in ra console,
     không raise exception để không làm fail toàn bộ GitHub Action job).
     """
     if report_date is None:
@@ -88,7 +101,7 @@ def send_report_email(file_paths: list[str], report_date: date | None = None,
     gmail_user     = os.environ.get("GMAIL_USER")
     gmail_password = os.environ.get("GMAIL_APP_PASSWORD")
     analyst_emails = os.environ.get("ANALYST_EMAIL", "")
-    your_email     = os.environ.get("YOUR_EMAIL", "")  # tùy chọn, để nhận CC
+    your_email     = os.environ.get("YOUR_EMAIL", "")
 
     if not gmail_user or not gmail_password:
         print("✗ Lỗi: Thiếu GMAIL_USER hoặc GMAIL_APP_PASSWORD trong environment variables")
@@ -118,6 +131,7 @@ def send_report_email(file_paths: list[str], report_date: date | None = None,
         summary_stats.get("total_itm", 0),
         summary_stats.get("total_otm", 0),
         expiry_warning_html=expiry_warning_html,
+        new_listing_html=new_listing_html,
     )
     msg.attach(MIMEText(body_html, "html", "utf-8"))
 
@@ -148,19 +162,19 @@ def send_report_email(file_paths: list[str], report_date: date | None = None,
 
 
 if __name__ == "__main__":
-    # Test cục bộ: cần set env var trước khi chạy
-    #   export GMAIL_USER="ban@gmail.com"
-    #   export GMAIL_APP_PASSWORD="xxxx xxxx xxxx xxxx"
-    #   export ANALYST_EMAIL="analyst1@company.com,analyst2@company.com"
-    #   export YOUR_EMAIL="ban@gmail.com"   (tùy chọn, để nhận CC)
     test_files = ["/tmp/KetQuaGiaoDich_20260625.xlsx", "/tmp/ThongTinChungQuyen_20260625.xlsx"]
-    fake_warning_html = """
+    fake_expiry_html = """
     <p style="color:#c62828;font-weight:bold;">⚠ Có 2 mã CW sắp ngừng giao dịch:</p>
     <p>CACB2510 (còn 1 phiên), CFPT2521 (còn 0 phiên)</p>
     """
+    fake_new_listing_html = """
+    <p style="color:#2e7d32;font-weight:bold;">🆕 Có 2 mã CW mới niêm yết:</p>
+    <p>CMSN2620, CTPB2610</p>
+    """
     ok = send_report_email(
         test_files,
-        summary_stats={"total_active": 246, "total_itm": 58, "total_otm": 188},
-        expiry_warning_html=fake_warning_html,
+        summary_stats={"total_active": 273, "total_itm": 46, "total_otm": 220},
+        expiry_warning_html=fake_expiry_html,
+        new_listing_html=fake_new_listing_html,
     )
     print("Kết quả gửi:", "Thành công" if ok else "Thất bại")
