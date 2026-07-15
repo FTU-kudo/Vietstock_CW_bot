@@ -6,6 +6,7 @@
 #   2. Tính Premium, Đòn bẩy, Volatility lịch sử (src/calculator.py)
 #   3. Xuất 2 file Excel (src/export_excel.py)
 #   3.5. Kiểm tra CW sắp ngừng giao dịch (src/expiry_warning.py)
+#   3.6. Phát hiện CW mới niêm yết (src/new_listing.py)
 #   4. Gửi email cho bộ phận phân tích, kèm cảnh báo (src/send_email.py)
 #
 # Chạy: python main.py
@@ -25,6 +26,7 @@ from calculator import enrich_cw_record
 from export_excel import export_two_excel_files
 from send_email import send_report_email
 from expiry_warning import get_expiring_soon_list, build_expiry_warning_html
+from new_listing import load_previous_codes, save_current_codes, find_new_listings, build_new_listing_html
 
 
 OUTPUT_DIR = "output"
@@ -113,6 +115,29 @@ def main():
 
     expiry_html = build_expiry_warning_html(expiring_records, report_date=today)
 
+    # ── BƯỚC 3.6: PHÁT HIỆN CW MỚI NIÊM YẾT ────────────────
+    print("\n🆕 BƯỚC 3.6/4: Kiểm tra CW mới niêm yết...")
+    previous_codes = load_previous_codes()
+    if previous_codes is None:
+        print("   Chưa có dữ liệu lần chạy trước (có thể là lần đầu triển khai tính năng "
+              "này) -- bỏ qua kiểm tra lần này, sẽ lưu danh sách hôm nay để so sánh lần sau")
+        new_listings = []
+    else:
+        new_listings = find_new_listings(enriched_records, previous_codes)
+        if new_listings:
+            print(f"🆕 Phát hiện {len(new_listings)} mã CW mới niêm yết:")
+            for r in new_listings:
+                print(f"     - {r['ma_cw']} (CKCS: {r.get('ck_co_so', '-')})")
+        else:
+            print("   Không có mã CW mới niêm yết hôm nay")
+
+    new_listing_html = build_new_listing_html(new_listings, report_date=today)
+
+    # Lưu lại danh sách hôm nay để lần chạy sau so sánh
+    # (bước "Commit updated CW codes snapshot" trong workflow sẽ push file này lên repo)
+    save_current_codes(enriched_records)
+    print(f"✅ Đã lưu snapshot {len(enriched_records)} mã CW cho lần chạy tiếp theo")
+
     # ── BƯỚC 4: GỬI EMAIL ────────────────────────────────────
     print("\n📧 BƯỚC 4/4: Gửi email cho bộ phận phân tích...")
     email_sent = send_report_email(
@@ -124,6 +149,7 @@ def main():
             "total_otm": total_otm,
         },
         expiry_warning_html=expiry_html,
+        new_listing_html=new_listing_html,
     )
 
     total_time = time.time() - start_time
