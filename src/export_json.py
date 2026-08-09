@@ -204,13 +204,11 @@ if __name__ == "__main__":
         assert idx1["dates"] == ["2026-07-23"]
         print("✅ update_history_index (lần 1): đúng")
 
-        # Test thêm ngày thứ 2, đảm bảo không mất ngày cũ
         idx2 = update_history_index(date(2026, 7, 24), index_file=index_file)
         assert idx2["dates"] == ["2026-07-23", "2026-07-24"]
         assert idx2["latest"] == "2026-07-24"
         print("✅ update_history_index (lần 2): giữ nguyên ngày cũ, thêm ngày mới")
 
-        # Test publish_latest_excel
         fake_excel_dir = os.path.join(tmpdir, "output")
         os.makedirs(fake_excel_dir, exist_ok=True)
         fake_xlsx1 = os.path.join(fake_excel_dir, "KetQuaGiaoDich_20260723.xlsx")
