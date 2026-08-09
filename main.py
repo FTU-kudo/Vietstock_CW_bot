@@ -7,7 +7,10 @@
 #   3. Xuất 2 file Excel (src/export_excel.py)
 #   3.5. Kiểm tra CW sắp ngừng giao dịch (src/expiry_warning.py)
 #   3.6. Phát hiện CW mới niêm yết (src/new_listing.py)
-#   4. Gửi email cho bộ phận phân tích, kèm cảnh báo (src/send_email.py)
+#   3.7. Xuất dữ liệu JSON cho GitHub Pages dashboard (src/export_json.py)
+#
+# KHÔNG còn gửi email (bộ phận phân tích chuyển sang xem qua
+# GitHub Pages). Xem README.md để biết cách bật GitHub Pages.
 #
 # Chạy: python main.py
 # (Được GitHub Actions gọi tự động theo cron, xem .github/workflows/daily_report.yml)
@@ -24,9 +27,9 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 from scraper import crawl_all_cw, get_stock_code_from_cw, crawl_all_stock_histories
 from calculator import enrich_cw_record
 from export_excel import export_two_excel_files
-from send_email import send_report_email
-from expiry_warning import get_expiring_soon_list, build_expiry_warning_html
-from new_listing import load_previous_codes, save_current_codes, find_new_listings, build_new_listing_html
+from expiry_warning import get_expiring_soon_list
+from new_listing import load_previous_codes, save_current_codes, find_new_listings
+from export_json import build_daily_snapshot, save_daily_snapshot, update_history_index, publish_latest_excel
 
 
 OUTPUT_DIR = "output"
@@ -50,7 +53,7 @@ def main():
     Path(OUTPUT_DIR).mkdir(exist_ok=True)
 
     # ── BƯỚC 1: CRAWL DỮ LIỆU CW ────────────────────────────
-    print("\n📥 BƯỚC 1/4: Crawl dữ liệu CW từ Vietstock...")
+    print("\n📥 BƯỚC 1: Crawl dữ liệu CW từ Vietstock...")
     records_active, records_all = crawl_all_cw(
         today=today, progress_callback=progress_logger
     )
@@ -58,11 +61,11 @@ def main():
           f"(tổng {len(records_all)} mã tồn tại)")
 
     if not records_active:
-        print("✗ Không có dữ liệu CW nào. Dừng chương trình, không gửi email.")
+        print("✗ Không có dữ liệu CW nào. Dừng chương trình.")
         sys.exit(1)
 
     # ── BƯỚC 1.5: CRAWL LỊCH SỬ GIÁ CKCS (để tính volatility) ─
-    print("\n📥 BƯỚC 1.5/4: Crawl lịch sử giá cổ phiếu cơ sở...")
+    print("\n📥 BƯỚC 1.5: Crawl lịch sử giá cổ phiếu cơ sở...")
     stock_codes_needed = set()
     for r in records_active:
         stock = get_stock_code_from_cw(r["ma_cw"])
@@ -75,7 +78,7 @@ def main():
     print(f"✅ Lấy được lịch sử giá cho {success_histories}/{len(stock_codes_needed)} mã")
 
     # ── BƯỚC 2: TÍNH TOÁN PREMIUM, ĐÒN BẨY, VOLATILITY ─────
-    print("\n🧮 BƯỚC 2/4: Tính Premium, Đòn bẩy, Độ biến động lịch sử...")
+    print("\n🧮 BƯỚC 2: Tính Premium, Đòn bẩy, Độ biến động lịch sử...")
     enriched_records = []
     for r in records_active:
         stock_code = get_stock_code_from_cw(r["ma_cw"])
@@ -90,7 +93,7 @@ def main():
           f"ATM: {len(enriched_records) - total_itm - total_otm}")
 
     # ── BƯỚC 3: XUẤT 2 FILE EXCEL ───────────────────────────
-    print("\n📊 BƯỚC 3/4: Xuất file Excel...")
+    print("\n📊 BƯỚC 3: Xuất file Excel...")
     try:
         f1, f2 = export_two_excel_files(
             enriched_records, output_dir=OUTPUT_DIR, report_date=today
@@ -103,7 +106,7 @@ def main():
         sys.exit(1)
 
     # ── BƯỚC 3.5: KIỂM TRA CW SẮP NGỪNG GIAO DỊCH ──────────
-    print("\n⚠  BƯỚC 3.5/4: Kiểm tra CW sắp ngừng giao dịch (≤2 ngày làm việc)...")
+    print("\n⚠  BƯỚC 3.5: Kiểm tra CW sắp ngừng giao dịch (≤2 ngày làm việc)...")
     expiring_records = get_expiring_soon_list(enriched_records)
     if expiring_records:
         print(f"⚠  Phát hiện {len(expiring_records)} mã sắp ngừng giao dịch:")
@@ -113,14 +116,12 @@ def main():
     else:
         print("✅ Không có mã nào sắp ngừng giao dịch trong 2 phiên tới")
 
-    expiry_html = build_expiry_warning_html(expiring_records, report_date=today)
-
     # ── BƯỚC 3.6: PHÁT HIỆN CW MỚI NIÊM YẾT ────────────────
-    print("\n🆕 BƯỚC 3.6/4: Kiểm tra CW mới niêm yết...")
+    print("\n🆕 BƯỚC 3.6: Kiểm tra CW mới niêm yết...")
     previous_codes = load_previous_codes()
     if previous_codes is None:
-        print("   Chưa có dữ liệu lần chạy trước (có thể là lần đầu triển khai tính năng "
-              "này) -- bỏ qua kiểm tra lần này, sẽ lưu danh sách hôm nay để so sánh lần sau")
+        print("   Chưa có dữ liệu lần chạy trước -- bỏ qua kiểm tra lần này, "
+              "sẽ lưu danh sách hôm nay để so sánh lần sau")
         new_listings = []
     else:
         new_listings = find_new_listings(enriched_records, previous_codes)
@@ -131,36 +132,29 @@ def main():
         else:
             print("   Không có mã CW mới niêm yết hôm nay")
 
-    new_listing_html = build_new_listing_html(new_listings, report_date=today)
-
-    # Lưu lại danh sách hôm nay để lần chạy sau so sánh
-    # (bước "Commit updated CW codes snapshot" trong workflow sẽ push file này lên repo)
     save_current_codes(enriched_records)
     print(f"✅ Đã lưu snapshot {len(enriched_records)} mã CW cho lần chạy tiếp theo")
 
-    # ── BƯỚC 4: GỬI EMAIL ────────────────────────────────────
-    print("\n📧 BƯỚC 4/4: Gửi email cho bộ phận phân tích...")
-    email_sent = send_report_email(
-        file_paths=[f1, f2],
-        report_date=today,
-        summary_stats={
-            "total_active": len(enriched_records),
-            "total_itm": total_itm,
-            "total_otm": total_otm,
-        },
-        expiry_warning_html=expiry_html,
-        new_listing_html=new_listing_html,
-    )
+    # ── BƯỚC 3.7: XUẤT DỮ LIỆU JSON CHO GITHUB PAGES ───────
+    print("\n🌐 BƯỚC 3.7: Xuất dữ liệu JSON cho dashboard...")
+    new_listing_codes = [r["ma_cw"] for r in new_listings]
+    snapshot = build_daily_snapshot(enriched_records, new_listing_codes, today=today)
+    json_path = save_daily_snapshot(snapshot)
+    print(f"✅ Đã lưu: {json_path}")
+
+    index = update_history_index(today)
+    print(f"✅ Đã cập nhật index: {len(index['dates'])} ngày có dữ liệu "
+          f"(mới nhất: {index['latest']})")
+
+    published = publish_latest_excel([f1, f2])
+    print(f"✅ Đã publish Excel mới nhất lên docs/downloads/: "
+          f"{[Path(p).name for p in published]}")
 
     total_time = time.time() - start_time
     print("\n" + "=" * 64)
     print(f"  HOÀN THÀNH | Thời gian chạy: {total_time:.1f}s ({total_time/60:.1f} phút)")
-    print(f"  Email: {'✅ Đã gửi' if email_sent else '✗ Gửi thất bại'}")
+    print(f"  Dữ liệu đã sẵn sàng để deploy lên GitHub Pages")
     print("=" * 64)
-
-    if not email_sent:
-        print("⚠ Lưu ý: file Excel đã tạo thành công, chỉ email thất bại.")
-        print("  Kiểm tra GitHub Secrets: GMAIL_USER, GMAIL_APP_PASSWORD, ANALYST_EMAIL")
 
 
 if __name__ == "__main__":
