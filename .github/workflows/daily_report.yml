@@ -1,11 +1,15 @@
 name: Daily CW Report
 
 on:
+  # schedule:
+  #   # 16:00 giờ Việt Nam (UTC+7) = 09:00 UTC
+  #   # Đặt phút lệch khỏi mốc :00 để tránh giờ cao điểm của GitHub Actions
+  #   - cron: "13 9 * * 1-5"
   workflow_dispatch:
     # Cho phép chạy thủ công từ tab Actions trên GitHub để test
 
 permissions:
-  contents: write   # cần quyền ghi để commit lại snapshot mã CW hôm nay
+  contents: write   # cần quyền ghi để commit dữ liệu JSON + Excel vào docs/
 
 jobs:
   crawl-and-report:
@@ -31,20 +35,15 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run daily CW report
-        env:
-          GMAIL_USER: ${{ secrets.GMAIL_USER }}
-          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
-          ANALYST_EMAIL: ${{ secrets.ANALYST_EMAIL }}
-          YOUR_EMAIL: ${{ secrets.YOUR_EMAIL }}
         run: python main.py
 
-      - name: Commit updated CW codes snapshot
+      - name: Commit updated data to repo
         if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/last_active_codes.json
-          git diff --staged --quiet || git commit -m "Update CW codes snapshot $(date -u +'%Y-%m-%d')"
+          git add data/last_active_codes.json docs/data/ docs/downloads/
+          git diff --staged --quiet || git commit -m "Update CW data $(date -u +'%Y-%m-%d')"
           git pull --rebase || true
           git push
 
