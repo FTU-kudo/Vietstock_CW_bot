@@ -1,10 +1,10 @@
-# Vietstock CW Daily Report Bot
+# 🌐 Vietstock CW Dashboard
 
-Tự động crawl dữ liệu chứng quyền (CW) từ Vietstock, tính Premium/Đòn bẩy/Độ biến
-động lịch sử, xuất 2 file Excel, cảnh báo CW sắp ngừng giao dịch, và gửi email tự
-động hàng ngày lúc 16:00 (giờ VN), Thứ 2 - Thứ 6.
+🤖 Tự động crawl dữ liệu chứng quyền (CW) từ Vietstock hàng ngày, tính Premium/Đòn bẩy/Độ biến động lịch sử, phát hiện mã mới niêm yết và mã sắp ngừng giao dịch, rồi publish lên **GitHub Pages** dưới dạng dashboard xem trực tiếp trên trình duyệt.
 
-## Cấu trúc project (10 file)
+🔗 **Dashboard:** `https://ftu-kudo.github.io/Vietstock_CW_bot/`
+
+## 📁 Cấu trúc project
 
 ```
 vietstock-cw-bot/
@@ -13,90 +13,95 @@ vietstock-cw-bot/
 ├── README.md
 ├── main.py                              ← orchestrator chạy toàn bộ pipeline
 ├── .github/workflows/daily_report.yml   ← cron job GitHub Actions
+├── data/
+│   └── last_active_codes.json           ← snapshot mã CW (để phát hiện mã mới)
+├── docs/                                 ← nguồn của GitHub Pages
+│   ├── .nojekyll                         ← BẮT BUỘC, xem mục Troubleshooting
+│   ├── index.html
+│   ├── style.css
+│   ├── app.js                            ← toàn bộ logic dashboard (vanilla JS)
+│   ├── data/
+│   │   ├── index.json                    ← danh sách các ngày có dữ liệu
+│   │   └── daily/
+│   │       └── YYYYMMDD.json             ← snapshot đầy đủ 1 ngày (tích lũy dần)
+│   └── downloads/
+│       ├── KetQuaGiaoDich_latest.xlsx    ← luôn là bản mới nhất, ghi đè mỗi ngày
+│       └── ThongTinChungQuyen_latest.xlsx
 └── src/
     ├── scraper.py           ← Bước 1: crawl dữ liệu CW + lịch sử giá CKCS
-    ├── calculator.py        ← Bước 2: tính Premium, Đòn bẩy, Volatility, cờ cảnh báo hết hạn
+    ├── calculator.py        ← Bước 2: Premium, Đòn bẩy, Volatility, cờ cảnh báo hết hạn
     ├── export_excel.py      ← Bước 3: xuất 2 file Excel theo mẫu PDF Yuanta
-    ├── expiry_warning.py    ← Bước 3.5: tổng hợp danh sách CW sắp ngừng giao dịch
-    └── send_email.py        ← Bước 4: gửi email qua Gmail SMTP, kèm cảnh báo
+    ├── expiry_warning.py    ← Bước 3.5: lọc danh sách CW sắp ngừng giao dịch
+    ├── new_listing.py       ← Bước 3.6: phát hiện CW mới niêm yết
+    └── export_json.py       ← Bước 3.7: xuất JSON cho dashboard
 ```
+ 
+## ⚙️ Cách hoạt động
 
-## Cài đặt local để test trước khi đẩy lên GitHub (tùy chọn)
+Mỗi lần chạy (python main.py), pipeline thực hiện tuần tự:
+1. 🕷️ Crawl toàn bộ mã CW đang giao dịch từ Vietstock (21 cổ phiếu cơ sở × 2 năm × 50 đợt phát hành)
+2. 📈 Crawl thêm lịch sử giá 30 phiên gần nhất của các cổ phiếu cơ sở, để tính độ biến động
+3. 🧮 Tính Premium, Đòn bẩy, Trạng thái tiền (ITM/OTM/ATM), Độ biến động lịch sử
+4. 📊 Xuất 2 file Excel (KetQuaGiaoDich_YYYYMMDD.xlsx, ThongTinChungQuyen_YYYYMMDD.xlsx)
+5. ⏰ Lọc ra các mã sắp ngừng giao dịch (≤2 ngày làm việc)
+6. 🆕 So sánh với snapshot hôm qua để tìm mã mới niêm yết
+7. 📦 Xuất dữ liệu JSON cho dashboard, cập nhật index, publish bản Excel mới nhất vào docs/downloads/
 
-```bash
-pip install -r requirements.txt
+Workflow GitHub Actions sau đó commit toàn bộ dữ liệu mới (data/, docs/data/, docs/downloads/) ngược lại vào repo — GitHub Pages tự động phát hiện commit mới và cập nhật trang trong vài phút.
 
-export GMAIL_USER="ban@gmail.com"
-export GMAIL_APP_PASSWORD="xxxx xxxx xxxx xxxx"
-export ANALYST_EMAIL="analyst1@company.com,analyst2@company.com"
-export YOUR_EMAIL="ban@gmail.com"   # tùy chọn, để CC cho chính bạn
+## 🚀 Cài đặt lần đầu
 
-python main.py
-```
+### 1. Bật GitHub Pages
 
-Kiểm tra thư mục `output/` sẽ có 2 file Excel, và email sẽ được gửi nếu cấu hình đúng.
+**Settings → Pages** → Source: **"Deploy from a branch"** → Branch: `main`, thư mục **`/docs`** → Save.
 
-## Tạo Gmail App Password (bắt buộc, không dùng mật khẩu Gmail thường)
+### 2. Không cần cấu hình Secret nào
 
-1. Vào [myaccount.google.com/security](https://myaccount.google.com/security)
-2. Bật **"Xác minh 2 bước"** (2-Step Verification) — bắt buộc phải bật trước
-3. Vào **"Mật khẩu ứng dụng"** (App passwords) → chọn app "Mail" → tạo mới
-4. Copy chuỗi 16 ký tự (dạng `xxxx xxxx xxxx xxxx`) — đây là `GMAIL_APP_PASSWORD`
+Khác với phiên bản dùng email trước đây, bản hiện tại **không cần bất kỳ GitHub Secret nào** (đã bỏ Gmail App Password) — pipeline chỉ cần quyền ghi vào repo (`contents: write`, đã khai báo sẵn trong workflow) để tự commit dữ liệu.
 
-## Cấu hình GitHub Secrets (bắt buộc trước khi cron chạy được)
+### 3. Chạy thử
 
-Vào repo trên GitHub → **Settings → Secrets and variables → Actions → New repository secret**,
-thêm 4 secrets sau:
+Vào tab **Actions** → chọn "Daily CW Report" → **Run workflow**. Chạy **2 lần liên tiếp** để tính năng "mã mới niêm yết" hoạt động đầy đủ (lần đầu chỉ tạo baseline, lần 2 mới có để so sánh).
 
-| Secret name           | Giá trị                                                    |
-|------------------------|-------------------------------------------------------------|
-| `GMAIL_USER`           | Địa chỉ Gmail dùng để gửi (VD: `bot.ysvn@gmail.com`)         |
-| `GMAIL_APP_PASSWORD`   | App Password 16 ký tự vừa tạo ở bước trên                    |
-| `ANALYST_EMAIL`        | Email bộ phận phân tích, cách nhau bằng dấu phẩy nếu nhiều   |
-| `YOUR_EMAIL`           | Email của bạn (tùy chọn, để nhận CC cùng nội dung cảnh báo)  |
+## 🕒 Lịch chạy tự động
 
-## Kiểm tra cron hoạt động
+Cron: `13 9 * * 1-5` (UTC) = **16:13 giờ Việt Nam, Thứ 2 - Thứ 6**. Phút được cố ý lệch khỏi mốc `:00` để tránh giờ cao điểm của GitHub Actions (đầu mỗi giờ là lúc cron dễ bị trễ nhiều nhất theo công bố của GitHub).
 
-- Cron được cấu hình chạy `0 9 * * 1-5` (UTC) = 16:00 giờ VN, Thứ 2 - Thứ 6.
-- Để test ngay không cần đợi tới giờ: vào tab **Actions** trên GitHub → chọn
-  workflow "Daily CW Report" → **Run workflow** (nút màu xanh, chạy thủ công).
-- File Excel mỗi lần chạy cũng được lưu làm **Artifact** trong 30 ngày,
-  xem tại tab Actions → chọn lần chạy → phần "Artifacts" ở cuối trang.
+## 📊 Tính năng dashboard
 
-## Lưu ý về độ trễ GitHub Actions cron
+- 📅 **Chọn ngày**: dropdown góc trên phải, xem lại bất kỳ ngày nào đã có dữ liệu
+- 🏷️ **Thẻ tóm tắt**: tổng CW, ITM, OTM, mã mới niêm yết, mã sắp ngừng giao dịch
+- 🔍 **Tìm kiếm**: theo mã CW hoặc mã cổ phiếu cơ sở
+- 🎛️ **Lọc**: ITM/OTM, chỉ mã mới, chỉ mã sắp ngừng giao dịch
+- 🔽 **Sắp xếp**: click vào tiêu đề cột bất kỳ
+- 📥 **Tải Excel**: 2 link tải bản mới nhất, luôn trỏ đúng ngày gần nhất (không cần sửa link theo ngày)
+- 🎨 Dòng **tô xanh** = mã mới niêm yết hôm đó; dòng **tô cam** = sắp ngừng giao dịch
 
-GitHub Actions cron có thể trễ 5-15 phút so với giờ đặt (do tải hệ thống chung
-của GitHub), đây là giới hạn của nền tảng, không phải lỗi code. Nếu cần độ chính
-xác cao hơn, có thể cân nhắc dùng external cron service (VD: cron-job.org) để
-gọi `workflow_dispatch` qua GitHub API — nhưng với báo cáo hàng ngày, độ trễ vài
-phút thường không ảnh hưởng.
+## 📦 Về phạm vi lưu trữ dữ liệu
 
-## Cảnh báo CW sắp ngừng giao dịch
+Dữ liệu **tích lũy dần từ ngày triển khai trở đi** — không backfill lịch sử 2020-2025, vì Vietstock không cung cấp lại đầy đủ giá đóng cửa hàng ngày cho các CW đã đáo hạn từ lâu qua giao diện HTML thông thường (trang "Thống kê giao dịch" chỉ giữ ~30 phiên gần nhất). Theo thời gian, kho dữ liệu trong `docs/data/daily/` sẽ dày dần lên tới mục tiêu lưu trữ nhiều năm.
 
-Mỗi lần chạy, hệ thống tự động kiểm tra các mã CW có **≤ 2 ngày làm việc** còn lại
-trước khi ngừng giao dịch (dựa trên "Ngày giao dịch cuối cùng", không phải ngày
-đáo hạn). Danh sách này được:
-1. In ra log của GitHub Actions (xem trong tab Actions → chi tiết lần chạy)
-2. Chèn vào cuối nội dung email chính (bảng cảnh báo màu đỏ/cam)
+## 🔧 Troubleshooting
 
-Để đổi ngưỡng cảnh báo (VD: 3 ngày thay vì 2), sửa tham số `threshold_sessions`
-trong hàm `is_about_to_expire()` tại `src/calculator.py`.
+**🖥️ Dashboard báo "Lỗi tải dữ liệu: Không tải được data/index.json"**
+→ Kiểm tra file `docs/.nojekyll` (rỗng) có tồn tại chưa. Thiếu file này, GitHub Pages chạy qua Jekyll trước khi publish, có thể xử lý sai hoặc bỏ sót thư mục `docs/data/`.
+Đây là nguyên nhân phổ biến nhất — nếu vẫn lỗi sau khi thêm `.nojekyll`, kiểm tra tiếp bước "Commit updated data to repo" trong log Actions có thành công không.
 
-## Troubleshooting
+**📎 Link "Tải Excel" không tải được gì**
+→ Kiểm tra `.gitignore` không còn dòng `*.xlsx` (dòng này sẽ chặn Git commit file Excel trong `docs/downloads/`, kể cả khi workflow gọi `git add` tường minh — Git luôn tôn trọng `.gitignore`). Sau khi sửa, phải **chạy lại workflow** thì file Excel mới thực sự được tạo và commit — sửa `.gitignore` không tự hồi tố dữ liệu cũ.
 
-**Email không gửi được, lỗi "SMTPAuthenticationError"**
-→ Kiểm tra lại đã dùng App Password (16 ký tự), không phải mật khẩu Gmail thường.
+**⏳  Cột "Số phiên còn lại" hoặc cờ "sắp ngừng giao dịch" bị bỏ sót**
+→ Vietstock đôi khi đổi cấu trúc trang CW ngay sau giờ đóng cửa đối với mã đáo hạn trong ngày, khiến trường "Ngày giao dịch cuối cùng" đọc trượt. `calculator.py` đã có cơ chế dự phòng: dùng "Ngày đáo hạn" làm nguồn thứ 2 nếu nguồn chính không đọc được (xem docstring hàm `is_about_to_expire`).
 
-**Crawl bị chặn / trả về ít mã hơn bình thường**
-→ Vietstock có thể tạm thời chặn IP của GitHub Actions runner. Giảm `MAX_WORKERS`
-trong `src/scraper.py` xuống 5, hoặc thêm delay lớn hơn.
+**📄 Dữ liệu Excel bị dồn chữ lộn xộn (text từ nhiều dòng dính vào 1 ô)**
+→ Đã fix trong `scraper.py` (hàm `_clean_cell`) — do HTML của Vietstock không đóng thẻ `<tr>` chuẩn, khiến BeautifulSoup lồng nhầm nội dung dòng sau vào dòng trước.
 
-**Workflow không tự chạy đúng giờ**
-→ Đảm bảo repo không ở trạng thái "inactive" (GitHub tự tắt cron nếu repo không
-có commit nào trong 60 ngày). Thỉnh thoảng commit nhỏ để giữ repo active.
+**⏰ Workflow không tự chạy đúng giờ / cron bị trễ nhiều**
+→ GitHub Actions cron là "best-effort", có thể trễ tới hàng chục phút, đặc biệt nếu đặt đúng mốc `:00`. Repo cũng cần có hoạt động (commit) thường xuyên — GitHub tự tắt cron nếu repo không có commit nào trong 60 ngày liên tục.
 
-**Cột "Số phiên còn lại" hiện trống dù CW sắp đáo hạn**
-→ Đã sửa lỗi này (falsy-zero bug): giá trị 0 phiên (nghĩa là hôm nay là ngày
-giao dịch cuối cùng) trước đây bị hiểu nhầm thành "không có dữ liệu". Nếu vẫn
-gặp lại, kiểm tra hàm `build_table1_df()` trong `src/export_excel.py` dùng
-đúng `is not None` thay vì `or`.
+**🕸️ Crawl trả về 0 mã hoặc rất ít so với bình thường**
+→ Khả năng cao Vietstock đã đổi cấu trúc HTML trang CW. Kiểm tra file `chung-khoan-phai-sinh/{ma}/cw-tong-quan.htm` của 1 mã bất kỳ, so sánh với selector đang dùng trong `src/scraper.py` (`h1.h1-title`, `#stockprice`, `.short-doc table`,...).
+
+## 📜 Lịch sử phát triển (tóm tắt)
+
+Dự án ban đầu gửi báo cáo qua email (Gmail SMTP), sau đó chuyển hẳn sang GitHub Pages theo yêu cầu của bộ phận phân tích. Nếu thấy file `src/send_email.py` còn tồn tại trong repo, đó là code cũ không còn được `main.py` gọi tới — có thể xóa an toàn, hoặc giữ lại làm tham khảo nếu muốn khôi phục kênh email trong tương lai.
