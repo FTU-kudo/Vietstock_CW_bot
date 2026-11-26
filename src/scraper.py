@@ -9,6 +9,9 @@ import requests
 import re
 import time
 import threading
+import json
+import random
+from pathlib import Path
 from bs4 import BeautifulSoup
 from datetime import datetime, date
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -49,9 +52,19 @@ BASE_STOCKS = [
     "CSSB", "CSTB", "CTCB", "CTPB", "CVHM",
     "CVIB", "CVIC", "CVJC", "CVNM", "CVPB",
     "CVRE",
+    "CSSI",   # SSI: thêm vào danh sách CKCS hợp lệ từ 6/11/2026 (HOSE)
 ]
 
-MAX_ISSUANCE = 50  # mỗi mã quét từ 01 đến 50
+MAX_ISSUANCE   = 99   # trần cứng an toàn (CW code có 2 chữ số: 01..99)
+STOP_AFTER_MISS = 8   # dừng quét 1 nhóm (CKCS, năm) sau N mã not_found LIÊN TIẾP
+MAX_RETRIES    = 4    # retry cho lỗi tạm thời (timeout / 429 / 5xx)
+PREV_CODES_FILE = "data/last_active_codes.json"
+
+
+def default_years(today: date | None = None) -> list[str]:
+    """Năm trước, năm nay và năm sau (CW lô đầu năm sau có thể được cấp mã từ Q4)."""
+    y = (today or date.today()).year
+    return [str(y - 1)[2:], str(y)[2:], str(y + 1)[2:]]
 
 
 def generate_cw_codes(years: list[str] | None = None) -> list[str]:
@@ -60,8 +73,7 @@ def generate_cw_codes(years: list[str] | None = None) -> list[str]:
     Nếu years không truyền vào, tự động lấy năm hiện tại + năm trước.
     """
     if years is None:
-        current_year = datetime.now().year
-        years = [str(current_year - 1)[2:], str(current_year)[2:]]
+        years = default_years()
 
     codes = []
     for stock in BASE_STOCKS:
@@ -171,8 +183,22 @@ def _parse_basic_table(soup: BeautifulSoup) -> dict:
 
 # ── CRAWL 1 MÃ CW ────────────────────────────────────────────
 
+def _is_transient(status: str) -> bool:
+    return status == "error" or status in ("http_429", "http_403") or status.startswith("http_5")
+
+
 def get_cw_detail(code: str) -> dict:
-    """Tải và parse trang chi tiết 1 mã CW."""
+    """Tải và parse trang chi tiết 1 mã CW (có retry cho lỗi tạm thời)."""
+    result = None
+    for attempt in range(MAX_RETRIES):
+        result = _fetch_once(code)
+        if not _is_transient(result["status"]):
+            return result
+        time.sleep((2 ** attempt) * 0.5 + random.random() * 0.5)   # backoff + jitter
+    return result            # status vẫn là "error"/"http_xxx" -> caller phải coi là THIẾU DỮ LIỆU, không phải "không tồn tại"
+
+
+def _fetch_once(code: str) -> dict:
     url    = f"{BASE_URL}/chung-khoan-phai-sinh/{code}/cw-tong-quan.htm"
     result = {"ma_cw": code, "status": "unknown"}
     sess   = _get_session()
@@ -194,7 +220,10 @@ def get_cw_detail(code: str) -> dict:
     soup = BeautifulSoup(resp.text, "html.parser")
     h1 = soup.select_one("h1.h1-title")
     if not h1:
+        # HTTP 200 nhưng không có tiêu đề: hoặc mã không tồn tại (Vietstock trả trang rỗng),
+        # hoặc bị chặn/đổi cấu trúc. Phân biệt bằng "no_h1" để main.py/validator có thể cảnh báo.
         result["status"] = "not_found"
+        result["no_h1"]  = True
         return result
 
     result["status"] = "found"
@@ -270,40 +299,105 @@ def is_active(r: dict, today: date) -> bool:
 
 # ── CRAWL TOÀN BỘ (SONG SONG) ───────────────────────────────
 
+def _load_prev_codes(path: str | None = None) -> set[str]:
+    try:
+        with open(Path(path or PREV_CODES_FILE), "r", encoding="utf-8") as f:
+            return set(json.load(f))
+    except (OSError, json.JSONDecodeError):
+        return set()
+
+
+def _scan_group(prefix: str, yy: str, results: dict, progress_callback=None, total_hint: int = 0):
+    """
+    Quét 1 nhóm (CKCS, năm) theo thứ tự 01, 02, ... và DỪNG khi gặp STOP_AFTER_MISS mã
+    not_found liên tiếp. Thay cho trần cứng MAX_ISSUANCE=50 cũ (CHPG26 đã chạm 50, CFPT26 = 49).
+    Lỗi tạm thời (error/http_5xx/429) KHÔNG được tính là "không tồn tại".
+    """
+    miss = 0
+    for n in range(1, MAX_ISSUANCE + 1):
+        code = f"{prefix}{yy}{n:02d}"
+        time.sleep(DELAY)
+        r = get_cw_detail(code)
+        results[code] = r
+        if progress_callback:
+            progress_callback(len(results), total_hint, code, r)
+        if r["status"] == "found":
+            miss = 0
+        elif r["status"] == "not_found":
+            miss += 1
+            if miss >= STOP_AFTER_MISS:
+                break
+        # trạng thái lỗi tạm thời: không đổi bộ đếm miss
+
+
+LAST_CRAWL_REPORT: dict = {}   # chẩn đoán lần crawl gần nhất (main.py/validator có thể đọc)
+
+
 def crawl_all_cw(today: date | None = None,
                   max_workers: int = MAX_WORKERS,
-                  progress_callback=None) -> tuple[list[dict], list[dict]]:
+                  progress_callback=None,
+                  max_prev_missing_ratio: float = 0.05) -> tuple[list[dict], list[dict]]:
     """
     Crawl toàn bộ mã CW, trả về (records_active, records_all_found).
 
-    progress_callback(done, total, code, result): gọi sau mỗi mã crawl xong,
-    dùng để log tiến độ ra console của GitHub Actions.
+    Khác bản cũ:
+      1. Quét thích ứng theo từng nhóm (CKCS, năm) thay vì 1..50 cố định.
+      2. Retry + backoff cho lỗi tạm thời; lỗi KHÔNG bị coi là "CW không tồn tại".
+      3. Re-check mọi mã của snapshot hôm trước mà lần này không lấy được (found).
+      4. Nếu còn > max_prev_missing_ratio mã hôm trước bị thiếu do lỗi crawl -> raise,
+         để workflow KHÔNG ghi đè snapshot bằng dữ liệu thiếu (vd ngày 29/09: rớt 77 mã).
     """
+    global LAST_CRAWL_REPORT
     if today is None:
         today = date.today()
 
-    all_codes = generate_cw_codes()
-    total     = len(all_codes)
-    results   = {}
-    lock      = threading.Lock()
+    years   = default_years(today)
+    groups  = [(p, yy) for p in BASE_STOCKS for yy in years]
+    results: dict[str, dict] = {}
+    lock    = threading.Lock()
 
-    def _crawl_one(code):
-        time.sleep(DELAY)
-        return code, get_cw_detail(code)
+    def _cb(done, total, code, r):
+        if progress_callback:
+            with lock:
+                progress_callback(len(results), 0, code, r)
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(_crawl_one, c): c for c in all_codes}
-        for future in as_completed(futures):
-            code, result = future.result()
-            with lock:
-                results[code] = result
-                if progress_callback:
-                    progress_callback(len(results), total, code, result)
+        futs = [executor.submit(_scan_group, p, yy, results, _cb) for p, yy in groups]
+        for f in as_completed(futs):
+            f.result()
 
-    ordered        = [results[c] for c in all_codes if c in results]
+    # Pass 2: mã hôm trước mà lần này chưa "found" -> thử lại tuần tự, chậm hơn
+    prev_codes = _load_prev_codes()
+    suspicious = sorted(c for c in prev_codes
+                        if results.get(c, {}).get("status") != "found")
+    for c in suspicious:
+        for _ in range(2):
+            time.sleep(1.0)
+            r = get_cw_detail(c)
+            results[c] = r
+            if r["status"] == "found":
+                break
+
+    still_missing = sorted(c for c in prev_codes
+                           if results.get(c, {}).get("status") != "found")
+
+    ordered        = [results[c] for c in sorted(results)]
     records_found  = [r for r in ordered if r.get("status") == "found"]
     records_active = [r for r in records_found if is_active(r, today)]
+    transient      = sorted(c for c, r in results.items() if _is_transient(r.get("status", "")))
 
+    LAST_CRAWL_REPORT = {
+        "requests": len(results), "found": len(records_found), "active": len(records_active),
+        "transient_failures": transient, "prev_codes_missing": still_missing,
+        "groups_hit_cap": sorted(f"{p}{yy}" for p, yy in groups
+                                  if results.get(f"{p}{yy}{MAX_ISSUANCE:02d}", {}).get("status") == "found"),
+    }
+    if still_missing:
+        print(f"⚠ {len(still_missing)} mã của snapshot trước KHÔNG lấy lại được: {still_missing[:15]}", flush=True)
+        if prev_codes and len(still_missing) / len(prev_codes) > max_prev_missing_ratio:
+            raise RuntimeError(
+                f"Crawl thiếu {len(still_missing)}/{len(prev_codes)} mã so với snapshot trước "
+                f"(> {max_prev_missing_ratio:.0%}) -- nghi lỗi mạng/chặn IP, dừng để không ghi dữ liệu thiếu.")
     return records_active, records_found
 
 
@@ -316,7 +410,7 @@ CW_PREFIX_TO_STOCK = {
     "CMWG": "MWG",  "CSHB": "SHB",  "CSSB": "SSB",  "CSTB": "STB",
     "CTCB": "TCB",  "CTPB": "TPB",  "CVHM": "VHM",  "CVIB": "VIB",
     "CVIC": "VIC",  "CVJC": "VJC",  "CVNM": "VNM",  "CVPB": "VPB",
-    "CVRE": "VRE",
+    "CVRE": "VRE",  "CSSI": "SSI",
 }
 
 
